@@ -18,6 +18,7 @@ Frontend: **React 18 + TypeScript + Vite**.
 - [If something does not start](#if-something-does-not-start)
 - [Demo accounts](#demo-accounts)
 - [Frontend console](#frontend-console)
+- [Hot reload (development)](#hot-reload-development)
 - [Architecture](#architecture)
 - [Data model](#data-model)
 - [Order lifecycle](#order-lifecycle)
@@ -175,8 +176,38 @@ The same holds outside the UI — `curl` with a customer token gets the same
 `403`, because authorisation is enforced by FastAPI dependencies, not by the
 SPA.
 
-Frontend development (optional; the Compose stack already serves a production
-build):
+## Hot reload (development)
+
+The default `docker compose up` is **production-like**: code is baked into the
+images, so nothing reloads. That is intentional, but it is not what you want
+while editing. There are two dev workflows:
+
+| Workflow | Backend reload | Frontend HMR | UI URL |
+| --- | --- | --- | --- |
+| `docker compose up` (default) | no | no | :8080 |
+| `make dev` | yes (Uvicorn `--reload`) | yes (Vite) | :5173 |
+| `make run` + `make frontend-dev` (host tools) | yes | yes | :5173 |
+
+### Everything in Docker (no host Python/Node)
+
+```bash
+make dev        # db + api (reload) + Vite dev server, Ctrl-C to stop
+make dev-down   # stop, keeping the database volume
+make up         # back to the production-like stack on :8080
+```
+
+`compose.dev.yml` is an **opt-in override** — plain `docker compose up` is
+unaffected. It mounts `./app` into the API container and switches the command to
+Uvicorn with `--reload`, adds a `frontend` service running Vite with polling
+enabled (reliable with Docker Desktop bind mounts), and leaves Nginx out so
+there is only one UI on :5173. The Vite server proxies `/api` to the API
+container, so cookies/tokens and relative URLs behave the same as through Nginx.
+
+Verified: touching `app/main.py` restarts the reloader, and editing
+`frontend/src/pages/LoginPage.tsx` produced `[vite] hmr update …` with the DOM
+updated in place (no page reload).
+
+### Host tools (optional)
 
 ```bash
 make frontend-install
@@ -184,8 +215,11 @@ make frontend-dev        # Vite on :5173, proxies /api to localhost:8080
 make frontend-build      # type-check + production bundle in frontend/dist
 ```
 
-After changing `frontend/`, rebuild the Nginx image with
-`docker compose up --build -d nginx`.
+After changing `frontend/`, the Nginx image only picks the build up on rebuild:
+
+```bash
+docker compose up --build -d nginx
+```
 
 
 ---

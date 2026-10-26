@@ -9,6 +9,12 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    // `make dev` runs Vite inside a container against a bind mount, where
+    // inotify events are unreliable; polling keeps HMR working there.
+    watch: {
+      usePolling: process.env.VITE_USE_POLLING === "true",
+      interval: 300,
+    },
     proxy: {
       "/api": { target, changeOrigin: true },
       "/health": { target, changeOrigin: true },

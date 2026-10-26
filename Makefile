@@ -4,7 +4,9 @@ PIP := $(VENV)/bin/pip
 PY := $(VENV)/bin/python
 
 .PHONY: install run test lint fmt migrate revision seed up down logs clean \
-	seed-docker frontend-install frontend-build frontend-dev openapi
+	seed-docker frontend-install frontend-build frontend-dev openapi dev dev-down
+
+DEV_COMPOSE := docker compose -f docker-compose.yml -f compose.dev.yml
 
 install:
 	$(PYTHON) -m venv $(VENV)
@@ -46,6 +48,14 @@ up:
 
 down:
 	docker compose down
+
+# Development mode: backend reload + Vite HMR in containers (no nginx).
+# Ctrl-C stops it; then run `make up` to return to the production-like stack.
+dev:
+	$(DEV_COMPOSE) up --build db api frontend
+
+dev-down:
+	$(DEV_COMPOSE) down
 
 logs:
 	docker compose logs -f api
