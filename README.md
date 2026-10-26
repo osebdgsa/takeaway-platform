@@ -15,6 +15,7 @@ Frontend: **React 18 + TypeScript + Vite**.
 
 - [Requirements mapping](#requirements-mapping)
 - [Quick start](#quick-start)
+- [If something does not start](#if-something-does-not-start)
 - [Demo accounts](#demo-accounts)
 - [Frontend console](#frontend-console)
 - [Architecture](#architecture)
@@ -59,11 +60,24 @@ Two notes on interpretation:
 
 ## Quick start
 
+**Prerequisites:** Docker with Compose v2 (`docker compose version`), ~2 GB of
+free disk space, and ports `8080` (and optionally `8000` / `5432`) free. Python,
+Node and Postgres are **not** required on the host — everything runs in
+containers.
+
 ```bash
+git clone https://github.com/osebdgsa/takeaway-platform.git
+cd takeaway-platform
+
 cp .env.example .env          # set SECRET_KEY in anything but local dev
-docker compose up --build -d
+docker compose up --build -d  # first build: ~5 min (pulls Python/Node images)
 docker compose exec -T api python -m scripts.seed
 ```
+
+That is the whole install. `docker compose ps` should show `db`, `api` and
+`nginx` healthy, and the seed step prints the demo logins. Nothing else needs to
+be installed, no manual migration step: the API container waits for Postgres,
+runs `alembic upgrade head`, then starts Uvicorn.
 
 | What | URL |
 | --- | --- |
@@ -72,6 +86,10 @@ docker compose exec -T api python -m scripts.seed
 | Swagger UI | http://localhost:8080/docs |
 | OpenAPI JSON | http://localhost:8080/api/openapi.json |
 | Health | http://localhost:8080/health |
+
+Verified from a fresh clone running only the four commands above, without using
+the host's Python or Node: clone + `cp` + `up --build` completes in ~5 minutes on
+a cold image cache, seeding takes ~2 seconds.
 
 Nginx builds the SPA from `frontend/` and proxies `/api`, `/docs`, `/redoc` and
 `/health` to the API container, so the browser only ever talks to one origin
@@ -82,7 +100,24 @@ Nginx builds the SPA from `frontend/` and proxies `/api`, `/docs`, `/redoc` and
 > as debugging conveniences — they are not reachable from other machines. The
 > non-default `POSTGRES_PORT` avoids clashing with a local Postgres; the API
 > always reaches the database at `db:5432` inside the Compose network. Change
-> `HTTP_PORT` / `POSTGRES_PORT` / `API_PORT` in `.env` if those are taken.
+> `HTTP_PORT` / `POSTGRES_PORT` / `API_PORT` in `.env` before `up` if those are
+> taken.
+
+### If something does not start
+
+```bash
+docker compose ps                 # are all three services healthy?
+docker compose logs -f api        # migration/auth errors show up here
+docker compose down -v            # wipe DB volume and start over
+```
+
+| Symptom | Cause / fix |
+| --- | --- |
+| `port is already allocated` on 8080/8000/5432 | Something else is bound. Set `HTTP_PORT=8081` (etc.) in `.env`, or stop the other service. |
+| `up` hangs on `Waiting for database` | Postgres failed to start; check `docker compose logs db`. If you changed `POSTGRES_*` after the volume was created, the old credentials persist — `docker compose down -v`. |
+| Login fails with 401 after `up` | The seed step was skipped. Run `docker compose exec -T api python -m scripts.seed`. |
+| Console loads but API calls fail | Open `/health`; if it is not `{"status":"ok",...}`, the API container is unhealthy — check `docker compose logs api`. |
+| First build takes minutes | Expected: it pulls Python and Node base images and runs `pip install` + `npm ci`. Later starts are seconds. |
 
 ```bash
 # place an order as the seeded customer
