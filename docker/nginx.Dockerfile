@@ -11,5 +11,6 @@ FROM nginx:1.27-alpine
 
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx/default.conf /etc/nginx/conf.d/default.conf
+COPY nginx/security-spa.conf nginx/security-docs.conf /etc/nginx/snippets/
 
 EXPOSE 80

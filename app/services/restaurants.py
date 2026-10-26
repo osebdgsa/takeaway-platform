@@ -2,7 +2,9 @@
 
 import uuid
 
-from app.core.exceptions import NotFoundError
+from sqlalchemy.exc import IntegrityError
+
+from app.core.exceptions import ConflictError, NotFoundError
 from app.models.restaurant import Restaurant
 from app.models.user import User
 from app.repositories.restaurants import RestaurantRepository
@@ -41,5 +43,16 @@ class RestaurantService:
 
     def delete(self, restaurant_id: uuid.UUID) -> None:
         restaurant = self.get_or_404(restaurant_id)
+        # Explicit guard so the answer is a clean 409 regardless of which
+        # constraint the database would trip on (see the backstop below).
+        if self.restaurants.has_orders(restaurant_id):
+            raise ConflictError("Restaurant has orders and cannot be deleted")
         self.restaurants.delete(restaurant)
-        self.restaurants.commit()
+        try:
+            self.restaurants.commit()
+        except IntegrityError as exc:  # pragma: no cover - backstop for races
+            # A concurrent order placed between the check and the commit still
+            # refuses deletion: the commit fails (via the child-FK nullify), so
+            # the delete is rolled back instead of orphaning history.
+            self.restaurants.rollback()
+            raise ConflictError("Restaurant has orders and cannot be deleted") from exc

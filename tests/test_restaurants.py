@@ -167,6 +167,32 @@ def test_menu_items_for_unknown_restaurant_is_404(client: TestClient) -> None:
     assert response.status_code == 404
 
 
+def test_deleting_restaurant_with_orders_returns_409(
+    client: TestClient, admin_token: str, customer_token: str, restaurant: dict
+) -> None:
+    """A restaurant with order history gets a clean 409 via the explicit
+    has_orders() guard, no IntegrityError involved."""
+    item = add_menu_item(client, admin_token, restaurant["id"], price="10.00")
+    order = client.post(
+        "/api/orders",
+        json={
+            "restaurant_id": restaurant["id"],
+            "items": [{"menu_item_id": item["id"], "quantity": 1}],
+        },
+        headers=auth(customer_token),
+    )
+    assert order.status_code == 201
+
+    response = client.delete(
+        f"/api/restaurants/{restaurant['id']}", headers=auth(admin_token)
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Restaurant has orders and cannot be deleted"}
+    # The restaurant (and its order history) must still be intact.
+    assert client.get(f"/api/restaurants/{restaurant['id']}").status_code == 200
+
+
 def test_deleting_restaurant_removes_its_menu(
     client: TestClient, admin_token: str, restaurant: dict
 ) -> None:
