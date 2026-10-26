@@ -47,7 +47,7 @@ Frontend: **React 18 + TypeScript + Vite**.
 | FastAPI | `app/main.py`, `app/controllers/` | `/docs` |
 | PostgreSQL | `postgres:16-alpine`, `psycopg2`, migrations in Alembic | `docker compose exec db psql -U takeaway -d takeaway -c '\dt'` |
 | SQLAlchemy + Alembic | `app/models/`, `app/repositories/`, single initial revision applied by the entrypoint | `docker compose exec api alembic current` → `4071c36c4d9f (head)` |
-| Pydantic request/response models | `app/schemas/`, `response_model=` on the business routes | OpenAPI schemas at `/api/openapi.json` |
+| Pydantic request/response models | `app/schemas/`, response models on all business endpoints | OpenAPI schemas at `/api/openapi.json` |
 | JWT auth | `PyJWT` in `app/core/security.py`, `OAuth2PasswordBearer` in `app/controllers/deps.py` | `POST /api/auth/login`, then `/api/auth/me` |
 | Docker & docker-compose | `Dockerfile`, `docker-compose.yml` (db + api + nginx, healthchecks, named volume, non-root user) | `docker compose ps` |
 | Nginx in front of Uvicorn | `nginx/default.conf` upstream `api:8000`; Nginx is the only port published to all interfaces | `docker compose exec nginx cat /etc/nginx/conf.d/default.conf` |
@@ -90,10 +90,10 @@ Postgres, runs `alembic upgrade head`, then starts Uvicorn.
 | OpenAPI JSON | http://localhost:8080/api/openapi.json |
 | Health | http://localhost:8080/health |
 
-Verified from a fresh clone with only the commands above, without using the
-host's Python or Node: with a warm Docker cache the build takes about a minute,
-and seeding about two seconds. A completely cold build is slower because it
-pulls the Python, Node and Postgres base images.
+The first build takes a few minutes: it pulls the Python, Node and Postgres base
+images and installs both dependency sets. Later starts take seconds, and seeding
+takes about two seconds. The stack is exercised end-to-end as part of this work:
+build → migrations → seed → `/health` → order placement.
 
 Nginx builds the SPA from `frontend/` and proxies `/api`, `/docs`, `/redoc` and
 `/health` to the API container, so the browser only ever talks to one origin
@@ -333,7 +333,7 @@ pending ──► accepted ──► out_for_delivery ──► delivered
 
 - `POST /api/auth/register` always creates a **customer**. There is no public way
   to self-assign `admin`; the field is rejected (`422`). The first admin comes
-  from `scripts.seed.py`.
+  from `scripts/seed.py`.
 - `POST /api/auth/login` accepts `application/x-www-form-urlencoded`
   (`username`/`password`, the OAuth2 password flow) and returns a bearer JWT with
   `sub` (user id), `role`, `iat`, `exp`.
@@ -348,7 +348,7 @@ pending ──► accepted ──► out_for_delivery ──► delivered
 
 ## API reference
 
-All paths are under `/api`. Auth is `Authorization: Bearer <token>`.
+All business endpoints below are under `/api`. Auth is `Authorization: Bearer <token>`.
 
 | Method | Path | Access | Description |
 | --- | --- | --- | --- |
@@ -356,20 +356,23 @@ All paths are under `/api`. Auth is `Authorization: Bearer <token>`.
 | `POST` | `/auth/login` | public | Get JWT |
 | `GET` | `/auth/me` | any user | Current account |
 | `GET` | `/restaurants` | public | Paginated restaurant list |
-| `GET` | `/restaurants/{id}` | public | Restaurant detail |
-| `GET` | `/restaurants/{id}/menu-items` | public | Paginated menu |
+| `GET` | `/restaurants/{restaurant_id}` | public | Restaurant detail |
+| `GET` | `/restaurants/{restaurant_id}/menu-items` | public | Paginated menu |
 | `POST` | `/restaurants` | admin | Create restaurant |
-| `PATCH` | `/restaurants/{id}` | admin | Update restaurant |
-| `DELETE` | `/restaurants/{id}` | admin | Delete restaurant + menu |
-| `POST` | `/restaurants/{id}/menu-items` | admin | Add menu item |
-| `GET` | `/menu-items/{id}` | public | Menu item detail |
-| `PATCH` | `/menu-items/{id}` | admin | Update menu item |
-| `DELETE` | `/menu-items/{id}` | admin | Delete menu item |
+| `PATCH` | `/restaurants/{restaurant_id}` | admin | Update restaurant |
+| `DELETE` | `/restaurants/{restaurant_id}` | admin | Delete restaurant + menu |
+| `POST` | `/restaurants/{restaurant_id}/menu-items` | admin | Add menu item |
+| `GET` | `/menu-items/{menu_item_id}` | public | Menu item detail |
+| `PATCH` | `/menu-items/{menu_item_id}` | admin | Update menu item |
+| `DELETE` | `/menu-items/{menu_item_id}` | admin | Delete menu item |
 | `POST` | `/orders` | customer/admin | Place order |
 | `GET` | `/orders` | any user | Own orders (all orders for admin) |
-| `GET` | `/orders/{id}` | owner/admin | Track order |
-| `POST` | `/orders/{id}/cancel` | owner | Cancel pending order |
-| `PATCH` | `/orders/{id}/status` | admin | Advance status |
+| `GET` | `/orders/{order_id}` | owner/admin | Track order |
+| `POST` | `/orders/{order_id}/cancel` | owner | Cancel pending order |
+| `PATCH` | `/orders/{order_id}/status` | admin | Advance status |
+
+Operational endpoints live outside `/api`: `GET /health` (checks the database),
+`GET /docs`, `GET /redoc` and `GET /api/openapi.json`.
 
 List endpoints take `limit` (1–100, default 20) and `offset` (default 0) and
 return `{items, total, limit, offset}`.
@@ -501,7 +504,7 @@ uv run pytest tests/test_orders.py -q   # single file
 - Covered: registration/login/JWT failures, disabled accounts, RBAC on every
   admin route, pagination, price snapshots, total calculation, cross-restaurant
   items, unavailable items, duplicate lines, ownership isolation, the full status
-  workflow and every rejected transition.
+  workflow and rejected transitions.
 
 ---
 
