@@ -22,8 +22,15 @@ class Settings(BaseSettings):
     # Auth
     SECRET_KEY: str = "dev-secret-change-me"
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    # Short-lived access token; the refresh flow extends the session.
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     BCRYPT_ROUNDS: int = 12
+
+    # Rate limiting (per process; see core/ratelimit.py).
+    RATE_LIMIT_LOGIN: int = 10
+    RATE_LIMIT_ORDERS: int = 30
+    RATE_LIMIT_WINDOW_SECONDS: float = 60.0
 
     # Database
     DATABASE_URL: str = (

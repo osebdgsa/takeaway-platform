@@ -39,6 +39,19 @@ def db_session() -> Iterator[Session]:
         engine.dispose()
 
 
+@pytest.fixture(autouse=True)
+def reset_rate_limiters() -> Iterator[None]:
+    """Rate-limit state lives in-process and must not leak across tests."""
+    from app.controllers.auth import login_limiter
+    from app.controllers.orders import order_limiter
+
+    login_limiter.reset()
+    order_limiter.reset()
+    yield
+    login_limiter.reset()
+    order_limiter.reset()
+
+
 @pytest.fixture()
 def client(db_session: Session) -> Iterator[TestClient]:
     def override_get_db() -> Iterator[Session]:

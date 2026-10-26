@@ -496,6 +496,19 @@
         "title": "Page[RestaurantRead]",
         "type": "object"
       },
+      "RefreshRequest": {
+        "properties": {
+          "refresh_token": {
+            "title": "Refresh Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "refresh_token"
+        ],
+        "title": "RefreshRequest",
+        "type": "object"
+      },
       "RestaurantCreate": {
         "additionalProperties": false,
         "properties": {
@@ -674,8 +687,13 @@
             "type": "string"
           },
           "expires_in": {
+            "description": "Access token lifetime in seconds",
             "title": "Expires In",
             "type": "integer"
+          },
+          "refresh_token": {
+            "title": "Refresh Token",
+            "type": "string"
           },
           "token_type": {
             "default": "bearer",
@@ -685,6 +703,7 @@
         },
         "required": [
           "access_token",
+          "refresh_token",
           "expires_in"
         ],
         "title": "Token",
@@ -857,7 +876,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Obtain a JWT access token",
+        "summary": "Obtain an access + refresh token pair",
         "tags": [
           "auth"
         ]
@@ -884,6 +903,47 @@
           }
         ],
         "summary": "Current authenticated user",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/refresh": {
+      "post": {
+        "operationId": "refresh_api_auth_refresh_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Token"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Exchange a refresh token for a new pair",
         "tags": [
           "auth"
         ]
@@ -1167,7 +1227,7 @@
             "OAuth2PasswordBearer": []
           }
         ],
-        "summary": "Place an order",
+        "summary": "Place an order (optionally with an Idempotency-Key header)",
         "tags": [
           "orders"
         ]

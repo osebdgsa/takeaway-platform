@@ -39,6 +39,10 @@ class ValidationError(AppError):
     status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
 
 
+class RateLimitError(AppError):
+    status_code = status.HTTP_429_TOO_MANY_REQUESTS
+
+
 async def app_error_handler(_: Request, exc: AppError) -> JSONResponse:
     headers = {}
     if isinstance(exc, UnauthorizedError):

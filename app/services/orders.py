@@ -3,10 +3,13 @@
 import uuid
 from decimal import Decimal
 
+from sqlalchemy.exc import IntegrityError
+
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.models.enums import ALLOWED_TRANSITIONS, OrderStatus, UserRole
 from app.models.order import Order, OrderItem
 from app.models.user import User
+from app.repositories.idempotency_keys import IdempotencyKeyRepository
 from app.repositories.menu_items import MenuItemRepository
 from app.repositories.orders import OrderRepository
 from app.repositories.restaurants import RestaurantRepository
@@ -41,7 +44,14 @@ class OrderService:
         return order
 
     # ----------------------------------------------------------------- write
-    def create(self, customer: User, payload: OrderCreate) -> Order:
+    def create(
+        self,
+        customer: User,
+        payload: OrderCreate,
+        *,
+        idempotency_key: str = "",
+        request_hash: str = "",
+    ) -> Order:
         restaurant = self.restaurants.get(payload.restaurant_id)
         if restaurant is None:
             raise NotFoundError("Restaurant not found")
@@ -87,6 +97,37 @@ class OrderService:
 
         order.total_amount = total.quantize(_CENT)
         self.orders.add(order)
+        if idempotency_key:
+            keys = IdempotencyKeyRepository(self.db)
+            existing = keys.get(customer.id, idempotency_key)
+            if existing is not None:
+                self.orders.rollback()
+                if existing.request_hash != request_hash:
+                    raise ConflictError(
+                        "Idempotency-Key already used with a different payload"
+                    )
+                stored = self.orders.get_with_lines(existing.order_id)
+                assert stored is not None  # RESTRICT keeps the FK live
+                return stored  # replay of the first accepted order
+            try:
+                self.db.flush()
+                keys.add(
+                    key=idempotency_key,
+                    user_id=customer.id,
+                    request_hash=request_hash,
+                    order_id=order.id,
+                )
+            except IntegrityError as exc:
+                # Concurrent retry with the same key: return the stored order.
+                self.orders.rollback()
+                winner = IdempotencyKeyRepository(self.db).get(
+                    customer.id, idempotency_key
+                )
+                if winner is None:
+                    raise ConflictError("Idempotency conflict") from exc
+                stored = self.orders.get_with_lines(winner.order_id)
+                assert stored is not None
+                return stored
         self.orders.commit()
         return self.orders.get_with_lines(order.id)  # type: ignore[return-value]
 

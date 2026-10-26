@@ -1,25 +1,58 @@
 """Order endpoints: customers place/track, admins advance status."""
 
+import hashlib
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Depends, Request, status
 
 from app.controllers.deps import AdminUser, CurrentUser, DbSession, Limit, Offset
+from app.core.config import settings
+from app.core.ratelimit import SlidingWindowLimiter
 from app.schemas.common import Page
 from app.schemas.order import OrderCreate, OrderRead, OrderStatusUpdate
 from app.services.orders import OrderService
 
 router = APIRouter()
 
+order_limiter = SlidingWindowLimiter(
+    limit=settings.RATE_LIMIT_ORDERS, window_seconds=settings.RATE_LIMIT_WINDOW_SECONDS
+)
+
+
+def _order_rate_limit(request: Request, user: CurrentUser) -> None:
+    """Apply a per-user sliding-window limit to order placement."""
+    order_limiter.hit(str(user.id))
+
+
+RateLimitedOrder = Depends(_order_rate_limit)
+
+
+def _header_and_hash(request: Request, payload: OrderCreate) -> tuple[str, str]:
+    """Return (idempotency_key, sha256-of-normalised-body)."""
+    raw_key = request.headers.get("Idempotency-Key", "")
+    key = raw_key.strip()
+    body_hash = hashlib.sha256(payload.model_dump_json().encode()).hexdigest()
+    return key, body_hash
+
 
 @router.post(
     "",
     response_model=OrderRead,
     status_code=status.HTTP_201_CREATED,
-    summary="Place an order",
+    summary="Place an order (optionally with an Idempotency-Key header)",
 )
-def place_order(payload: OrderCreate, db: DbSession, user: CurrentUser):
-    return OrderService(db).create(user, payload)
+def place_order(
+    payload: OrderCreate,
+    request: Request,
+    db: DbSession,
+    user: CurrentUser,
+    _: Annotated[None, RateLimitedOrder],
+):
+    key, body_hash = _header_and_hash(request, payload)
+    return OrderService(db).create(
+        user, payload, idempotency_key=key, request_hash=body_hash
+    )
 
 
 @router.get(
