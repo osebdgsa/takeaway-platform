@@ -1,7 +1,4 @@
-PYTHON ?= python3
-VENV := .venv
-PIP := $(VENV)/bin/pip
-PY := $(VENV)/bin/python
+UV ?= uv
 
 .PHONY: install run test lint fmt migrate revision seed up down logs clean \
 	seed-docker frontend-install frontend-build frontend-dev openapi dev dev-down
@@ -9,36 +6,34 @@ PY := $(VENV)/bin/python
 DEV_COMPOSE := docker compose -f docker-compose.yml -f compose.dev.yml
 
 install:
-	$(PYTHON) -m venv $(VENV)
-	$(PIP) install --upgrade pip
-	$(PIP) install -r requirements-dev.txt
+	$(UV) sync
 
 run:
-	$(VENV)/bin/uvicorn app.main:app --reload --port 8000
+	$(UV) run uvicorn app.main:app --reload --port 8000
 
 test:
-	$(PY) -m pytest $(ARGS)
+	$(UV) run pytest $(ARGS)
 
 lint:
-	$(VENV)/bin/ruff check .
-	$(VENV)/bin/ruff format --check .
+	$(UV) run ruff check .
+	$(UV) run ruff format --check .
 
 fmt:
-	$(VENV)/bin/ruff check --fix .
-	$(VENV)/bin/ruff format .
+	$(UV) run ruff check --fix .
+	$(UV) run ruff format .
 
 migrate:
-	$(VENV)/bin/alembic upgrade head
+	$(UV) run alembic upgrade head
 
 revision:
-	$(VENV)/bin/alembic revision --autogenerate -m "$(m)"
+	$(UV) run alembic revision --autogenerate -m "$(m)"
 
 # Regenerate the committed OpenAPI schema after changing routes or schemas.
 openapi:
-	$(PY) -m scripts.export_openapi
+	$(UV) run python -m scripts.export_openapi
 
 seed:
-	$(PY) -m scripts.seed
+	$(UV) run python -m scripts.seed
 
 seed-docker:
 	docker compose exec -T api python -m scripts.seed
@@ -75,4 +70,4 @@ frontend-dev:
 	cd frontend && npm run dev
 
 clean:
-	rm -rf $(VENV) .pytest_cache .ruff_cache htmlcov .coverage __pycache__
+	rm -rf .venv .pytest_cache .ruff_cache htmlcov .coverage __pycache__

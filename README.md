@@ -7,6 +7,7 @@ by Nginx and served from the same origin as the API.
 
 Backend: **FastAPI**, **PostgreSQL**, **SQLAlchemy 2 + Alembic**, **Pydantic v2**,
 **JWT auth**, **Docker Compose** and **Nginx** in front of **Uvicorn**.
+Dependencies are managed with **uv** (`pyproject.toml` + `uv.lock`).
 Frontend: **React 18 + TypeScript + Vite**.
 
 ---
@@ -26,6 +27,7 @@ Frontend: **React 18 + TypeScript + Vite**.
 - [API reference](#api-reference)
 - [OpenAPI schema](#openapi-schema)
 - [Running locally without Docker](#running-locally-without-docker)
+- [Dependency management (uv)](#dependency-management-uv)
 - [Migrations](#migrations)
 - [Tests](#tests)
 - [Design decisions & trade-offs](#design-decisions--trade-offs)
@@ -45,7 +47,7 @@ Frontend: **React 18 + TypeScript + Vite**.
 | FastAPI | `app/main.py`, `app/controllers/` | `/docs` |
 | PostgreSQL | `postgres:16-alpine`, `psycopg2`, migrations in Alembic | `docker compose exec db psql -U takeaway -d takeaway -c '\dt'` |
 | SQLAlchemy + Alembic | `app/models/`, `app/repositories/`, single initial revision applied by the entrypoint | `docker compose exec api alembic current` → `4071c36c4d9f (head)` |
-| Pydantic request/response models | `app/schemas/`, `response_model=` on every route | OpenAPI schemas at `/api/openapi.json` |
+| Pydantic request/response models | `app/schemas/`, `response_model=` on the business routes | OpenAPI schemas at `/api/openapi.json` |
 | JWT auth | `PyJWT` in `app/core/security.py`, `OAuth2PasswordBearer` in `app/controllers/deps.py` | `POST /api/auth/login`, then `/api/auth/me` |
 | Docker & docker-compose | `Dockerfile`, `docker-compose.yml` (db + api + nginx, healthchecks, named volume, non-root user) | `docker compose ps` |
 | Nginx in front of Uvicorn | `nginx/default.conf` upstream `api:8000`; Nginx is the only port published to all interfaces | `docker compose exec nginx cat /etc/nginx/conf.d/default.conf` |
@@ -71,14 +73,14 @@ git clone https://github.com/osebdgsa/takeaway-platform.git
 cd takeaway-platform
 
 cp .env.example .env          # set SECRET_KEY in anything but local dev
-docker compose up --build -d  # first build: ~5 min (pulls Python/Node images)
+docker compose up --build -d  # first build: a few minutes (pulls base images)
 docker compose exec -T api python -m scripts.seed
 ```
 
-That is the whole install. `docker compose ps` should show `db`, `api` and
-`nginx` healthy, and the seed step prints the demo logins. Nothing else needs to
-be installed, no manual migration step: the API container waits for Postgres,
-runs `alembic upgrade head`, then starts Uvicorn.
+That is the whole install. `docker compose ps` should show `db` and `api`
+healthy and `nginx` up, and the seed step prints the demo logins. Nothing else
+needs to be installed, no manual migration step: the API container waits for
+Postgres, runs `alembic upgrade head`, then starts Uvicorn.
 
 | What | URL |
 | --- | --- |
@@ -88,9 +90,10 @@ runs `alembic upgrade head`, then starts Uvicorn.
 | OpenAPI JSON | http://localhost:8080/api/openapi.json |
 | Health | http://localhost:8080/health |
 
-Verified from a fresh clone running only the four commands above, without using
-the host's Python or Node: clone + `cp` + `up --build` completes in ~5 minutes on
-a cold image cache, seeding takes ~2 seconds.
+Verified from a fresh clone with only the commands above, without using the
+host's Python or Node: with a warm Docker cache the build takes about a minute,
+and seeding about two seconds. A completely cold build is slower because it
+pulls the Python, Node and Postgres base images.
 
 Nginx builds the SPA from `frontend/` and proxies `/api`, `/docs`, `/redoc` and
 `/health` to the API container, so the browser only ever talks to one origin
@@ -107,7 +110,7 @@ Nginx builds the SPA from `frontend/` and proxies `/api`, `/docs`, `/redoc` and
 ### If something does not start
 
 ```bash
-docker compose ps                 # are all three services healthy?
+docker compose ps                 # db/api healthy, nginx up?
 docker compose logs -f api        # migration/auth errors show up here
 docker compose down -v            # wipe DB volume and start over
 ```
@@ -118,7 +121,10 @@ docker compose down -v            # wipe DB volume and start over
 | `up` hangs on `Waiting for database` | Postgres failed to start; check `docker compose logs db`. If you changed `POSTGRES_*` after the volume was created, the old credentials persist — `docker compose down -v`. |
 | Login fails with 401 after `up` | The seed step was skipped. Run `docker compose exec -T api python -m scripts.seed`. |
 | Console loads but API calls fail | Open `/health`; if it is not `{"status":"ok",...}`, the API container is unhealthy — check `docker compose logs api`. |
-| First build takes minutes | Expected: it pulls Python and Node base images and runs `pip install` + `npm ci`. Later starts are seconds. |
+| First build takes minutes | Expected: it pulls Python and Node base images and runs `uv sync` + `npm ci`. Later starts are seconds. |
+
+The `curl` example below uses [`jq`](https://jqlang.github.io/jq/); without it,
+read `access_token` from the login response by eye or with `python -c`.
 
 ```bash
 # place an order as the seeded customer
@@ -137,8 +143,8 @@ curl -s -X POST localhost:8080/api/orders \
 
 ## Demo accounts
 
-`python -m scripts.seed` (or `make seed-docker`) is idempotent and creates these
-accounts plus a restaurant with three menu items:
+`docker compose exec -T api python -m scripts.seed` (or `make seed-docker`) is
+idempotent and creates these accounts plus a restaurant with three menu items:
 
 | Role | Email | Password | What it demonstrates |
 | --- | --- | --- | --- |
@@ -185,10 +191,10 @@ while editing. There are two dev workflows:
 | Workflow | Backend reload | Frontend HMR | UI URL |
 | --- | --- | --- | --- |
 | `docker compose up` (default) | no | no | :8080 |
-| `make dev` | yes (Uvicorn `--reload`) | yes (Vite) | :5173 |
-| `make run` + `make frontend-dev` (host tools) | yes | yes | :5173 |
+| `make dev` (Docker only) | yes (Uvicorn `--reload`) | yes (Vite) | :5173 |
+| `make run` (host Python) | yes | no | API only on :8000 |
 
-### Everything in Docker (no host Python/Node)
+### Everything in Docker
 
 ```bash
 make dev        # db + api (reload) + Vite dev server, Ctrl-C to stop
@@ -211,8 +217,15 @@ updated in place (no page reload).
 
 ```bash
 make frontend-install
-make frontend-dev        # Vite on :5173, proxies /api to localhost:8080
+make frontend-dev        # Vite on :5173, proxies /api to the compose stack on :8080
 make frontend-build      # type-check + production bundle in frontend/dist
+```
+
+`make frontend-dev` expects the Compose stack to be up. To point it at a backend
+started on the host with `make run` instead, override the proxy target:
+
+```bash
+VITE_API_TARGET=http://localhost:8000 make frontend-dev
 ```
 
 After changing `frontend/`, the Nginx image only picks the build up on rebuild:
@@ -260,6 +273,7 @@ app/
 └── main.py             # app assembly, health check, exception handlers
 alembic/                # migration environment + versions
 openapi.json            # committed OpenAPI 3.1 schema (generated, see below)
+pyproject.toml + uv.lock # dependencies and the exact resolved lockfile
 scripts/seed.py         # idempotent demo data
 tests/                  # API tests against an in-memory DB (incl. OpenAPI drift check)
 frontend/               # React + TypeScript console (built into the Nginx image)
@@ -399,23 +413,56 @@ Generate it from the same code the server runs, never by editing JSON by hand.
 
 ## Running locally without Docker
 
-Requires Python 3.10+ and a running PostgreSQL.
+Requires Python 3.10+, [uv](https://docs.astral.sh/uv/) and a running PostgreSQL
+(`make` is convenient but optional — the equivalent `uv run …` commands are
+shown in comments). `uv sync` creates `.venv` from `uv.lock`.
 
 ```bash
-python3 -m venv .venv && . .venv/bin/activate
-pip install -r requirements-dev.txt
+curl -LsSf https://astral.sh/uv/install.sh | sh   # install uv, if needed
+
+uv sync             # production + dev dependencies into .venv (no activation needed)
 
 cp .env.example .env
 # .env points DATABASE_URL at localhost:5432
 
-make migrate        # alembic upgrade head
+make migrate        # uv run alembic upgrade head
 make seed           # optional demo data
-make run            # uvicorn --reload on :8000
+make run            # uv run uvicorn --reload on :8000
 ```
 
+Every `make` target wraps `uv run`, so the virtualenv does not need activating.
 The app starts **without** migrations applied but every data endpoint will fail;
 run `make migrate` first. `AUTO_CREATE_TABLES=true` exists as an escape hatch for
 throwaway local databases only.
+
+---
+
+## Dependency management (uv)
+
+| File | Role |
+| --- | --- |
+| `pyproject.toml` | direct dependencies, dev group, tool config |
+| `uv.lock` | exact resolved versions + hashes for every transitive package |
+| `Dockerfile` | `uv sync --frozen --no-dev` from the lockfile only |
+
+```bash
+uv add httpx                     # add a runtime dependency
+uv add --dev respx               # add a dev dependency
+uv remove httpx
+uv lock --check                  # fail if pyproject and uv.lock disagree
+uv sync                          # create/refresh .venv from the lock
+uv run <command>                 # run inside the project environment
+```
+
+Rules of thumb:
+
+- `uv.lock` is **committed**; the image builds with `--frozen`, so a lock that
+  does not match `pyproject.toml` fails the build rather than silently
+  re-resolving.
+- The Docker image installs with `--no-dev`; tests and ruff stay on the host/CI.
+- `[tool.uv] package = false` — this is an application, so uv syncs dependencies
+  without trying to build and install the project itself.
+- uv itself is not required on a machine that only runs `docker compose up`.
 
 ---
 
@@ -424,8 +471,8 @@ throwaway local databases only.
 ```bash
 make migrate                       # upgrade to head
 make revision m="add reviews"      # autogenerate a new revision
-.venv/bin/alembic downgrade -1     # roll back one revision
-.venv/bin/alembic check            # fail if models drift from migrations
+uv run alembic downgrade -1        # roll back one revision
+uv run alembic check               # fail if models drift from migrations
 ```
 
 The container entrypoint waits for PostgreSQL, runs `alembic upgrade head`, then
@@ -441,8 +488,9 @@ running PostgreSQL 16 container.
 ## Tests
 
 ```bash
-make test                       # 43 tests, ~1s
+make test                       # uv run pytest — 43 tests, ~1s
 make test ARGS="--cov=app"      # with coverage (96% lines)
+uv run pytest tests/test_orders.py -q   # single file
 ```
 
 - Tests run on an in-memory SQLite database with a single shared connection, and
@@ -459,6 +507,10 @@ make test ARGS="--cov=app"      # with coverage (96% lines)
 
 ## Design decisions & trade-offs
 
+- **uv for Python dependencies.** One tool resolves, locks and installs; the
+  commit contains `uv.lock`, so builds are reproducible and the Docker image
+  installs with `--frozen` instead of resolving at build time. `requirements.txt`
+  and pip were removed rather than kept as a second source of truth.
 - **Uvicorn, not Gunicorn.** FastAPI is ASGI-native; Uvicorn is the supported
   server. Gunicorn's `UvicornWorker` is the scaling option if multiple processes
   are ever needed — but one process plus `async` I/O is plenty here, and the
