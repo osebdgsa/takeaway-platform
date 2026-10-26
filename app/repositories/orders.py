@@ -14,8 +14,15 @@ _LOAD_LINES = selectinload(Order.items).selectinload(OrderItem.menu_item)
 class OrderRepository(BaseRepository[Order]):
     model = Order
 
-    def get_with_lines(self, order_id: uuid.UUID) -> Order | None:
+    def get_with_lines(
+        self, order_id: uuid.UUID, *, for_update: bool = False
+    ) -> Order | None:
         stmt = select(Order).options(_LOAD_LINES).where(Order.id == order_id)
+        if for_update:
+            # SELECT ... FOR UPDATE for status changes, so a concurrent
+            # transition cannot read a stale status (SQLite ignores this,
+            # PostgreSQL locks the row).
+            stmt = stmt.with_for_update()
         return self.db.scalar(stmt)
 
     def paginate(

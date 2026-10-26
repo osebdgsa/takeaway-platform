@@ -1,14 +1,17 @@
 const TOKEN_KEY = "takeaway.token";
 
+// sessionStorage, not localStorage: the token does not survive a closed tab,
+// so a stolen token has a smaller window. Authorisation is still enforced
+// server-side; the SPA never gates on the token itself.
 export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  return window.sessionStorage.getItem(TOKEN_KEY);
 }
 
 export function setToken(token: string | null): void {
   if (token) {
-    localStorage.setItem(TOKEN_KEY, token);
+    window.sessionStorage.setItem(TOKEN_KEY, token);
   } else {
-    localStorage.removeItem(TOKEN_KEY);
+    window.sessionStorage.removeItem(TOKEN_KEY);
   }
 }
 

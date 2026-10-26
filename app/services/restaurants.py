@@ -2,7 +2,9 @@
 
 import uuid
 
-from app.core.exceptions import NotFoundError
+from sqlalchemy.exc import IntegrityError
+
+from app.core.exceptions import ConflictError, NotFoundError
 from app.models.restaurant import Restaurant
 from app.models.user import User
 from app.repositories.restaurants import RestaurantRepository
@@ -42,4 +44,12 @@ class RestaurantService:
     def delete(self, restaurant_id: uuid.UUID) -> None:
         restaurant = self.get_or_404(restaurant_id)
         self.restaurants.delete(restaurant)
-        self.restaurants.commit()
+        try:
+            self.restaurants.commit()
+        except IntegrityError as exc:
+            # orders.restaurant_id is RESTRICT: a restaurant that has orders
+            # cannot be deleted, even though its menu cascades.
+            self.restaurants.rollback()
+            raise ConflictError(
+                "Restaurant has orders and cannot be deleted"
+            ) from exc

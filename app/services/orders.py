@@ -29,8 +29,10 @@ class OrderService:
         customer_id = None if user.role is UserRole.admin else user.id
         return self.orders.paginate(limit=limit, offset=offset, customer_id=customer_id)
 
-    def get_for(self, user: User, order_id: uuid.UUID) -> Order:
-        order = self.orders.get_with_lines(order_id)
+    def get_for(
+        self, user: User, order_id: uuid.UUID, *, for_update: bool = False
+    ) -> Order:
+        order = self.orders.get_with_lines(order_id, for_update=for_update)
         # Non-owners get 404 (not 403) so order ids cannot be probed.
         if order is None or (
             user.role is not UserRole.admin and order.customer_id != user.id
@@ -89,7 +91,7 @@ class OrderService:
         return self.orders.get_with_lines(order.id)  # type: ignore[return-value]
 
     def update_status(self, order_id: uuid.UUID, new_status: OrderStatus) -> Order:
-        order = self.orders.get_with_lines(order_id)
+        order = self.orders.get_with_lines(order_id, for_update=True)
         if order is None:
             raise NotFoundError("Order not found")
         if new_status is order.status:
@@ -105,7 +107,7 @@ class OrderService:
         return self.orders.get_with_lines(order.id)  # type: ignore[return-value]
 
     def cancel(self, customer: User, order_id: uuid.UUID) -> Order:
-        order = self.get_for(customer, order_id)
+        order = self.get_for(customer, order_id, for_update=True)
         if order.status is not OrderStatus.pending:
             raise ConflictError("Only pending orders can be cancelled")
         order.status = OrderStatus.cancelled

@@ -385,7 +385,7 @@ list of field errors for `422` validation failures.
 | `401` | missing/invalid/expired token, bad credentials |
 | `403` | authenticated but not an admin, or a disabled account |
 | `404` | resource missing, or order not owned by caller |
-| `409` | duplicate email, unavailable item, illegal status transition |
+| `409` | duplicate email, unavailable item, illegal status transition, deleting a restaurant that has orders |
 | `422` | schema validation or a business validation failure (unknown/foreign item, duplicate lines) |
 
 ---
@@ -531,6 +531,16 @@ uv run pytest tests/test_orders.py -q   # single file
   immediate.
 - **404 instead of 403 for another customer's order.** Avoids leaking which order
   ids exist.
+- **`DELETE /restaurants/{id}` refuses when orders exist (409).** The FK on
+  `orders.restaurant_id` is `RESTRICT`, so a restaurant with order history is
+  rejected cleanly instead of cascading history away; the menu would have
+  cascaded, order lines survive with `menu_item_id` set to `NULL`.
+- **Row locks on status changes.** `update_status` and `cancel` read the order
+  `FOR UPDATE` (PostgreSQL; SQLite ignores it, so tests are unaffected), so two
+  concurrent admin PATCHes cannot race a stale transition check.
+- **Tokens in `sessionStorage`, 30-minute expiry.** The SPA keeps the token for
+  the tab's lifetime only, limiting what a hypothetical XSS could steal; with no
+  refresh-token flow yet this means re-signing in after closing the tab.
 - **Non-native enums (VARCHAR + app-level validation).** Portable across
   PostgreSQL and SQLite and avoids painful `ALTER TYPE` migrations. A CHECK
   constraint can be added later if DB-level enforcement is preferred.
@@ -542,10 +552,10 @@ uv run pytest tests/test_orders.py -q   # single file
 
 ## Possible next steps
 
-- Refresh tokens + server-side revocation list; shorter access-token lifetime.
+- Refresh tokens + server-side revocation list (or httpOnly-cookie sessions).
 - Rate-limit login and order creation (Nginx `limit_req` or app middleware).
 - `Idempotency-Key` support on `POST /orders` to make retries safe.
 - Scope menus per restaurant owner (staff sub-role) rather than one global admin.
 - Cursor-based pagination and menu filtering (`?available=true`).
 - Structured JSON logging, request ids, metrics and OpenTelemetry tracing.
-- CI pipeline: ruff + pytest + `alembic check` + Docker build.
+- Docker build job in CI (lint + tests + `alembic check` already run there).

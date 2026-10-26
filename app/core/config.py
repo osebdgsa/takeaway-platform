@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     # Auth
     SECRET_KEY: str = "dev-secret-change-me"
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     BCRYPT_ROUNDS: int = 12
 
     # Database
