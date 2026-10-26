@@ -43,13 +43,16 @@ class RestaurantService:
 
     def delete(self, restaurant_id: uuid.UUID) -> None:
         restaurant = self.get_or_404(restaurant_id)
+        # Explicit guard so the answer is a clean 409 regardless of which
+        # constraint the database would trip on (the RESTRICT FK below is a
+        # backstop, not the primary mechanism).
+        if self.restaurants.has_orders(restaurant_id):
+            raise ConflictError("Restaurant has orders and cannot be deleted")
         self.restaurants.delete(restaurant)
         try:
             self.restaurants.commit()
-        except IntegrityError as exc:
-            # orders.restaurant_id is RESTRICT: a restaurant that has orders
-            # cannot be deleted, even though its menu cascades.
+        except IntegrityError as exc:  # pragma: no cover - backstop for races
+            # orders.restaurant_id is RESTRICT: a concurrent order placed
+            # between the check and the commit still refuses deletion.
             self.restaurants.rollback()
-            raise ConflictError(
-                "Restaurant has orders and cannot be deleted"
-            ) from exc
+            raise ConflictError("Restaurant has orders and cannot be deleted") from exc

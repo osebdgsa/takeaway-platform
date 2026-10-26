@@ -491,8 +491,8 @@ running PostgreSQL 16 container.
 ## Tests
 
 ```bash
-make test                       # uv run pytest — 43 tests, ~1s
-make test ARGS="--cov=app"      # with coverage (96% lines)
+make test                       # uv run pytest — 44 tests, ~1s
+make test ARGS="--cov=app"      # with coverage (97% lines)
 uv run pytest tests/test_orders.py -q   # single file
 ```
 
@@ -531,10 +531,11 @@ uv run pytest tests/test_orders.py -q   # single file
   immediate.
 - **404 instead of 403 for another customer's order.** Avoids leaking which order
   ids exist.
-- **`DELETE /restaurants/{id}` refuses when orders exist (409).** The FK on
-  `orders.restaurant_id` is `RESTRICT`, so a restaurant with order history is
-  rejected cleanly instead of cascading history away; the menu would have
-  cascaded, order lines survive with `menu_item_id` set to `NULL`.
+- **`DELETE /restaurants/{id}` refuses when orders exist (409).** The service
+  checks `has_orders()` explicitly and the FK on `orders.restaurant_id` is
+  `RESTRICT` as a backstop, so a restaurant with order history is rejected
+  cleanly instead of cascading history away; the menu would have cascaded,
+  order lines survive with `menu_item_id` set to `NULL`.
 - **Row locks on status changes.** `update_status` and `cancel` read the order
   `FOR UPDATE` (PostgreSQL; SQLite ignores it, so tests are unaffected), so two
   concurrent admin PATCHes cannot race a stale transition check.
@@ -558,4 +559,4 @@ uv run pytest tests/test_orders.py -q   # single file
 - Scope menus per restaurant owner (staff sub-role) rather than one global admin.
 - Cursor-based pagination and menu filtering (`?available=true`).
 - Structured JSON logging, request ids, metrics and OpenTelemetry tracing.
-- Docker build job in CI (lint + tests + `alembic check` already run there).
+- CI pipeline: ruff + pytest + `alembic check` + Docker build.

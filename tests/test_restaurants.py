@@ -189,9 +189,7 @@ def test_deleting_restaurant_with_orders_returns_409(
     assert response.status_code == 409
     assert response.json() == {"detail": "Restaurant has orders and cannot be deleted"}
     # The restaurant (and its order history) must still be intact.
-    assert (
-        client.get(f"/api/restaurants/{restaurant['id']}").status_code == 200
-    )
+    assert client.get(f"/api/restaurants/{restaurant['id']}").status_code == 200
 
 
 def test_deleting_restaurant_removes_its_menu(
