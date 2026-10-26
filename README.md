@@ -492,7 +492,7 @@ running PostgreSQL 16 container.
 
 ```bash
 make test                       # uv run pytest — 44 tests, ~1s
-make test ARGS="--cov=app"      # with coverage (97% lines)
+make test ARGS="--cov=app"      # with coverage (96% lines)
 uv run pytest tests/test_orders.py -q   # single file
 ```
 

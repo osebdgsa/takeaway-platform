@@ -170,7 +170,8 @@ def test_menu_items_for_unknown_restaurant_is_404(client: TestClient) -> None:
 def test_deleting_restaurant_with_orders_returns_409(
     client: TestClient, admin_token: str, customer_token: str, restaurant: dict
 ) -> None:
-    """orders.restaurant_id is RESTRICT: clean 409, not a 500 from IntegrityError."""
+    """A restaurant with order history gets a clean 409 via the explicit
+    has_orders() guard, no IntegrityError involved."""
     item = add_menu_item(client, admin_token, restaurant["id"], price="10.00")
     order = client.post(
         "/api/orders",
