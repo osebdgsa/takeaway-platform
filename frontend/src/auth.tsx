@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { getToken, request, setToken } from "./api";
+import { getToken, getRefreshToken, request, setToken, setTokens } from "./api";
 import type { TokenResponse, User } from "./types";
 
 interface AuthContextValue {
@@ -39,7 +39,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       setUser(await request<User>("/api/auth/me"));
     } catch {
-      setToken(null);
+      // request() already rotated once; clear only if the refresh itself failed.
+      if (!getRefreshToken()) setToken(null);
       setUser(null);
     } finally {
       setLoading(false);
@@ -57,7 +58,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       form,
       token: null,
     });
-    setToken(token.access_token);
+    if (token.refresh_token) {
+      setTokens({ access_token: token.access_token, refresh_token: token.refresh_token });
+    } else {
+      setToken(token.access_token);
+    }
     const me = await request<User>("/api/auth/me");
     setUser(me);
     return me;
@@ -76,7 +81,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(() => {
-    setToken(null);
+    setTokens(null);
     setUser(null);
   }, []);
 

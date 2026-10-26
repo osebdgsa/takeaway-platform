@@ -1,7 +1,8 @@
 const TOKEN_KEY = "takeaway.token";
+const REFRESH_KEY = "takeaway.refresh";
 
-// sessionStorage, not localStorage: the token does not survive a closed tab,
-// so a stolen token has a smaller window. Authorisation is still enforced
+// sessionStorage, not localStorage: the tokens do not survive a closed tab,
+// so stolen tokens have a smaller window. Authorisation is still enforced
 // server-side; the SPA never gates on the token itself.
 export function getToken(): string | null {
   return window.sessionStorage.getItem(TOKEN_KEY);
@@ -13,6 +14,36 @@ export function setToken(token: string | null): void {
   } else {
     window.sessionStorage.removeItem(TOKEN_KEY);
   }
+}
+
+export function getRefreshToken(): string | null {
+  return window.sessionStorage.getItem(REFRESH_KEY);
+}
+
+export function setTokens(tokens: { access_token: string; refresh_token: string } | null): void {
+  if (tokens) {
+    window.sessionStorage.setItem(TOKEN_KEY, tokens.access_token);
+    window.sessionStorage.setItem(REFRESH_KEY, tokens.refresh_token);
+  } else {
+    window.sessionStorage.removeItem(TOKEN_KEY);
+    window.sessionStorage.removeItem(REFRESH_KEY);
+  }
+}
+
+/** Exchange the stored refresh token for a new pair; throws on failure. */
+export async function refreshSession(): Promise<void> {
+  const raw = getRefreshToken();
+  if (!raw) throw new Error("no refresh token");
+  const response = await fetch("/api/auth/refresh", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token: raw }),
+  });
+  if (!response.ok) {
+    setTokens(null);
+    throw new Error("refresh failed");
+  }
+  setTokens((await response.json()) as { access_token: string; refresh_token: string });
 }
 
 export class ApiError extends Error {
@@ -70,12 +101,26 @@ export async function rawRequest(
   return { status: response.status, body: parsed };
 }
 
+interface InternalOptions extends RequestOptions {
+  /** Set on the single automatic retry after a refresh, to stop looping. */
+  _retried?: boolean;
+}
+
 export async function request<T>(
   path: string,
-  options: RequestOptions = {},
+  options: InternalOptions = {},
 ): Promise<T> {
   const { status, body } = await rawRequest(path, options);
   if (status >= 200 && status < 300) return body as T;
+  if (status === 401 && !options._retried && options.token === undefined && getToken()) {
+    // Access token expired mid-session: rotate once and retry.
+    try {
+      await refreshSession();
+      return await request<T>(path, { ...options, _retried: true });
+    } catch {
+      /* fall through to the original 401 */
+    }
+  }
   throw new ApiError(status, body);
 }
 

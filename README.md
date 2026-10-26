@@ -335,8 +335,9 @@ pending ──► accepted ──► out_for_delivery ──► delivered
   to self-assign `admin`; the field is rejected (`422`). The first admin comes
   from `scripts/seed.py`.
 - `POST /api/auth/login` accepts `application/x-www-form-urlencoded`
-  (`username`/`password`, the OAuth2 password flow) and returns a bearer JWT with
-  `sub` (user id), `role`, `iat`, `exp`.
+  (`username`/`password`, the OAuth2 password flow) and returns an access JWT
+  with `sub` (user id), `role`, `jti`, `iat`, `exp`, plus an opaque refresh
+  token; `POST /api/auth/refresh` rotates it into a new pair.
 - Every protected request re-loads the user from the database, so disabling or
   demoting an account takes effect immediately — the token's role claim is never
   trusted for authorisation.
@@ -353,7 +354,8 @@ All business endpoints below are under `/api`. Auth is `Authorization: Bearer <t
 | Method | Path | Access | Description |
 | --- | --- | --- | --- |
 | `POST` | `/auth/register` | public | Create customer account |
-| `POST` | `/auth/login` | public | Get JWT |
+| `POST` | `/auth/login` | public | Get access + refresh token pair |
+| `POST` | `/auth/refresh` | public | Rotate a refresh token into a new pair |
 | `GET` | `/auth/me` | any user | Current account |
 | `GET` | `/restaurants` | public | Paginated restaurant list |
 | `GET` | `/restaurants/{restaurant_id}` | public | Restaurant detail |
@@ -365,7 +367,7 @@ All business endpoints below are under `/api`. Auth is `Authorization: Bearer <t
 | `GET` | `/menu-items/{menu_item_id}` | public | Menu item detail |
 | `PATCH` | `/menu-items/{menu_item_id}` | admin | Update menu item |
 | `DELETE` | `/menu-items/{menu_item_id}` | admin | Delete menu item |
-| `POST` | `/orders` | customer/admin | Place order |
+| `POST` | `/orders` | customer/admin | Place order; repeats with the same `Idempotency-Key` + body return the first order (send the header only if you want retries to be safe — a reused key with a different body is `409`) |
 | `GET` | `/orders` | any user | Own orders (all orders for admin) |
 | `GET` | `/orders/{order_id}` | owner/admin | Track order |
 | `POST` | `/orders/{order_id}/cancel` | owner | Cancel pending order |
@@ -385,7 +387,8 @@ list of field errors for `422` validation failures.
 | `401` | missing/invalid/expired token, bad credentials |
 | `403` | authenticated but not an admin, or a disabled account |
 | `404` | resource missing, or order not owned by caller |
-| `409` | duplicate email, unavailable item, illegal status transition, deleting a restaurant that has orders |
+| `409` | duplicate email, unavailable item, illegal status transition, deleting a restaurant that has orders, reused Idempotency-Key with a different payload |
+| `429` | rate limit exceeded (login bursts per source address, order bursts per account); seconds until retry in the `Retry-After` header |
 | `422` | schema validation or a business validation failure (unknown/foreign item, duplicate lines) |
 
 ---
@@ -491,8 +494,8 @@ running PostgreSQL 16 container.
 ## Tests
 
 ```bash
-make test                       # uv run pytest — 44 tests, ~1s
-make test ARGS="--cov=app"      # with coverage (96% lines)
+make test                       # uv run pytest — 55 tests, ~1s
+make test ARGS="--cov=app"      # with coverage (96% lines on 1511 stmts)
 uv run pytest tests/test_orders.py -q   # single file
 ```
 
@@ -539,9 +542,22 @@ uv run pytest tests/test_orders.py -q   # single file
 - **Row locks on status changes.** `update_status` and `cancel` read the order
   `FOR UPDATE` (PostgreSQL; SQLite ignores it, so tests are unaffected), so two
   concurrent admin PATCHes cannot race a stale transition check.
-- **Tokens in `sessionStorage`, 30-minute expiry.** The SPA keeps the token for
-  the tab's lifetime only, limiting what a hypothetical XSS could steal; with no
-  refresh-token flow yet this means re-signing in after closing the tab.
+- **Refresh tokens with real rotation.** Login issues a short-lived access
+  JWT (15 min, unique `jti`) plus an opaque refresh token stored as a sha256
+  digest; every use rotates it, and replaying a used/revoked token revokes
+  every token of that account (replay is treated as a leak signal, so last
+  one wins becomes none survive).
+- **Rate limiting, in-process.** Login bursts are limited per source address
+  (default 10/min) and order placement per account (default 30/min), sliding
+  window, configurable via `RATE_LIMIT_*`; a multi-process/multi-host
+  deployment moves this to Nginx `limit_req` or Redis (see next steps).
+- **Idempotency keys on order placement.** A client that sends
+  `Idempotency-Key` gets replay-safe retries: same key + same payload is a
+  no-op returning the original order; same key + different payload is a 409.
+  Keys are scoped per user.
+- **Tokens in `sessionStorage`.** The SPA keeps both tokens for the tab's
+  lifetime only, limiting what a hypothetical XSS could steal; closing the
+  tab still means re-signing in, because revocation state is per session.
 - **Non-native enums (VARCHAR + app-level validation).** Portable across
   PostgreSQL and SQLite and avoids painful `ALTER TYPE` migrations. A CHECK
   constraint can be added later if DB-level enforcement is preferred.
@@ -553,9 +569,9 @@ uv run pytest tests/test_orders.py -q   # single file
 
 ## Possible next steps
 
-- Refresh tokens + server-side revocation list (or httpOnly-cookie sessions).
+- Move rate limiting front-side (Nginx `limit_req`) or to Redis for scale-out.
+- httpOnly-cookie sessions instead of js-visible tokens.
 - Rate-limit login and order creation (Nginx `limit_req` or app middleware).
-- `Idempotency-Key` support on `POST /orders` to make retries safe.
 - Scope menus per restaurant owner (staff sub-role) rather than one global admin.
 - Cursor-based pagination and menu filtering (`?available=true`).
 - Structured JSON logging, request ids, metrics and OpenTelemetry tracing.
