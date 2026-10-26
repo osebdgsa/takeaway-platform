@@ -1,0 +1,59 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-takeaway}
+      POSTGRES_USER: ${POSTGRES_USER:-takeaway}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-takeaway}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      # Localhost only: the supported entrypoint is Nginx on :8080.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-takeaway} -d ${POSTGRES_DB:-takeaway}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-takeaway}:${POSTGRES_PASSWORD:-takeaway}@db:5432/${POSTGRES_DB:-takeaway}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+      CORS_ORIGINS: ${CORS_ORIGINS:-[]}
+      DEBUG: ${DEBUG:-false}
+    ports:
+      # Localhost only; clients should go through Nginx on :8080. This is a
+      # debugging convenience so the API is not reachable from outside the host.
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  nginx:
+    build:
+      context: .
+      dockerfile: docker/nginx.Dockerfile
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  pgdata:
